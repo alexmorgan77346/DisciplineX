@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#07070d">
+  <meta name="description" content="DisciplineX — Premium goal tracking and focus app">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="DisciplineX">
+
+  <title>DisciplineX</title>
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     APP SHELL
+     ══════════════════════════════════════════════════════════ -->
+<div id="app">
+
+  <!-- TOP BAR -->
+  <header class="top-bar">
+    <div class="top-bar-logo">DisciplineX</div>
+    <div class="top-bar-actions">
+      <button class="icon-btn" id="btn-set-goal" title="Set / Edit Goal" aria-label="Set goal">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.5"/>
+          <circle cx="9" cy="9" r="3" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="9" y1="2" x2="9" y2="0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-reset" title="Reset data" aria-label="Reset">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M3 9a6 6 0 106-6H6M6 1L3 4l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── HOME SCREEN ──────────────────────────────────────── -->
+  <section class="screen active" id="screen-home" role="main">
+
+    <!-- Greeting banner -->
+    <div class="greeting-banner">
+      <div class="greeting-text" id="greeting-text">Good morning</div>
+      <div class="greeting-name" id="greeting-date"></div>
+      <div class="streak-badge">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+          <path d="M6 1C6 1 9.5 4 9.5 7A3.5 3.5 0 0 1 2.5 7C2.5 5.5 4 3.5 4 3.5C4 3.5 4.5 5 5 5C5 5 5 3 6 1Z"/>
+        </svg>
+        <span id="streak-count">0</span> day streak
+      </div>
+    </div>
+
+    <!-- Start focus button -->
+    <button class="focus-btn" id="start-focus-btn">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <circle cx="9" cy="9" r="7" stroke="white" stroke-width="1.5"/>
+        <path d="M7 6L13 9L7 12V6Z" fill="white"/>
+      </svg>
+      Start Focus Session
+    </button>
+
+    <!-- Today's tasks -->
+    <div class="today-header">
+      <span class="section-label" style="margin:0">Today's Tasks</span>
+      <div class="completion-chip" id="completion-pct">0%</div>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="progress-wrap" style="margin-bottom:var(--sp-4)">
+      <div class="progress-bar" id="overall-progress" style="width:0%"></div>
+    </div>
+
+    <!-- Task list -->
+    <div id="tasks-list"></div>
+
+  </section>
+
+  <!-- ── ROADMAP SCREEN ──────────────────────────────────── -->
+  <section class="screen" id="screen-roadmap">
+
+    <div class="section-label">Your Journey</div>
+    <div class="section-title">Roadmap</div>
+    <div class="section-sub">Break your goal into milestones and tasks.</div>
+
+    <div id="roadmap-content"></div>
+
+  </section>
+
+  <!-- ── STATS SCREEN ────────────────────────────────────── -->
+  <section class="screen" id="screen-stats">
+
+    <div class="section-label">Overview</div>
+    <div class="section-title">Progress</div>
+    <div class="section-sub">Track your consistency and momentum.</div>
+
+    <!-- Stats grid -->
+    <div class="stats-grid">
+      <div class="stat-card accent">
+        <div class="stat-label">Today</div>
+        <div class="stat-value"><span id="stat-pct">0</span><span class="stat-unit">%</span></div>
+      </div>
+      <div class="stat-card accent">
+        <div class="stat-label">Streak</div>
+        <div class="stat-value"><span id="stat-streak">0</span><span class="stat-unit">🔥</span></div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Completed</div>
+        <div class="stat-value"><span id="stat-done">0</span></div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Total Tasks</div>
+        <div class="stat-value"><span id="stat-total">0</span></div>
+      </div>
+      <div class="stat-card full amber">
+        <div class="stat-label">Last 28 Days</div>
+        <div class="streak-calendar" id="streak-calendar"></div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- BOTTOM NAV -->
+  <nav class="nav-bar" role="navigation" aria-label="Main navigation">
+    <button class="nav-item active" data-nav="home" aria-label="Home">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M3 9L10 3L17 9V17H13V13H7V17H3V9Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+      Home
+    </button>
+    <button class="nav-item" data-nav="roadmap" aria-label="Roadmap">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M2 4L7 2L13 4L18 2V14L13 16L7 14L2 16V4Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+      Roadmap
+    </button>
+    <button class="nav-item" data-nav="stats" aria-label="Stats">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <rect x="3" y="11" width="3" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/>
+        <rect x="8.5" y="7" width="3" height="11" rx="1" stroke="currentColor" stroke-width="1.5"/>
+        <rect x="14" y="3" width="3" height="15" rx="1" stroke="currentColor" stroke-width="1.5"/>
+      </svg>
+      Stats
+    </button>
+  </nav>
+
+</div><!-- /#app -->
+
+<!-- ══════════════════════════════════════════════════════════
+     FOCUS MODE OVERLAY
+     ══════════════════════════════════════════════════════════ -->
+<div id="focus-overlay" role="dialog" aria-modal="true" aria-label="Focus mode">
+
+  <div class="focus-task-label">Now focusing on</div>
+  <div class="focus-task-name" id="focus-task-name">—</div>
+
+  <!-- Circular timer -->
+  <div class="timer-ring-wrap">
+    <svg class="timer-ring-svg" width="220" height="220" viewBox="0 0 220 220">
+      <defs>
+        <linearGradient id="timerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#7c6dfa"/>
+          <stop offset="100%" stop-color="#a78bfa"/>
+        </linearGradient>
+      </defs>
+      <circle class="timer-ring-track" cx="110" cy="110" r="100"/>
+      <circle class="timer-ring-fill" id="timer-ring-fill" cx="110" cy="110" r="100"/>
+    </svg>
+    <div class="timer-center">
+      <div class="timer-display" id="timer-display">25:00</div>
+      <div class="timer-state" id="timer-state">READY</div>
+    </div>
+  </div>
+
+  <!-- Duration edit -->
+  <div class="timer-edit">
+    <label for="focus-timer-input">Duration (min)</label>
+    <input type="number" id="focus-timer-input" min="1" max="120" value="25">
+  </div>
+
+  <!-- Controls -->
+  <div class="focus-controls">
+    <button class="focus-ctrl-btn" id="focus-reset-btn" aria-label="Reset timer">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M4 10a6 6 0 106-6H7M7 2L4 5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <button class="focus-ctrl-btn play" id="focus-play-btn" aria-label="Play/Pause">
+      <span id="focus-play-icon"></span>
+    </button>
+    <button class="focus-ctrl-btn" aria-label="Coming soon" style="opacity:0.3;cursor:default">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M10 2a8 8 0 100 16A8 8 0 0010 2z" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M10 6v4l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <button class="focus-exit-btn" id="focus-exit-btn">✕ EXIT FOCUS</button>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     MODAL
+     ══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-overlay" role="dialog" aria-modal="true">
+  <div class="modal" id="modal-body"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     TOAST
+     ══════════════════════════════════════════════════════════ -->
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="script.js"></script>
+</body>
+</html>
