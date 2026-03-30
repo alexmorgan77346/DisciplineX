@@ -2,7 +2,7 @@
    DisciplineX — Service Worker v2
    Safe cache-first, silently handles missing assets
    ============================================================ */
-const CACHE = 'dx-v4';
+const CACHE = 'dx-v5';
 const ASSETS = ['./', './index.html', './style.css', './script.js', './manifest.json'];
 
 self.addEventListener('install', e => {
