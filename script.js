@@ -1,21 +1,30 @@
 /* ============================================================
-   DisciplineX v3 — App Script
-   BUG FIXED: daily task reset · 2 themes · no bottom gap
+   DisciplineX v4
+   - Dynamic status bar colour per theme
+   - Fixed streak (date comparison uses local date, not UTC)
+   - Profile system (name, bio, avatar initials)
+   - Daily task reset (done stored per day key)
    ============================================================ */
 'use strict';
 
 /* ══════════════════════════════════════════════════════════
-   THEMES — only Arctic White & Midnight Blue
+   THEMES
    ══════════════════════════════════════════════════════════ */
 const THEMES = [
-  { id:'1', name:'Arctic White', accent:'#6366f1', bg:'#e4e8f4' },
-  { id:'2', name:'Midnight Blue', accent:'#3b82f6', bg:'#0b1628' },
+  { id:'1', name:'Arctic White',  accent:'#6366f1', bg:'#f0f2f8', statusBg:'#f0f2f8' },
+  { id:'2', name:'Midnight Blue', accent:'#3b82f6', bg:'#0b1628', statusBg:'#060e1a' },
 ];
 
 function applyTheme(id) {
+  const th = THEMES.find(t => t.id === String(id)) || THEMES[1];
   document.documentElement.setAttribute('data-theme', id);
   localStorage.setItem('dx_theme', id);
-  const th = THEMES.find(t => t.id === String(id)) || THEMES[1];
+
+  // Update <meta name="theme-color"> → changes browser/PWA status bar colour
+  const meta = document.getElementById('theme-color-meta');
+  if (meta) meta.setAttribute('content', th.statusBg);
+
+  // Sync timer ring gradient
   const g1 = document.getElementById('timerGradStop1');
   const g2 = document.getElementById('timerGradStop2');
   if (g1) g1.setAttribute('stop-color', th.accent);
@@ -29,17 +38,57 @@ function loadTheme() {
 }
 
 /* ══════════════════════════════════════════════════════════
+   PROFILE
+   ══════════════════════════════════════════════════════════ */
+const DEFAULT_PROFILE = { name: '', bio: '' };
+
+function loadProfile() {
+  try {
+    const raw = localStorage.getItem('dx_profile');
+    return raw ? { ...DEFAULT_PROFILE, ...JSON.parse(raw) } : { ...DEFAULT_PROFILE };
+  } catch { return { ...DEFAULT_PROFILE }; }
+}
+function saveProfile(p) {
+  localStorage.setItem('dx_profile', JSON.stringify(p));
+}
+
+function getInitials(name) {
+  if (!name || !name.trim()) return '?';
+  return name.trim().split(/\s+/).map(w => w[0].toUpperCase()).slice(0, 2).join('');
+}
+
+function renderProfileUI() {
+  const p = loadProfile();
+  const initials = getInitials(p.name);
+
+  // Top-bar small avatar
+  const avatarEl = document.getElementById('avatar-initials');
+  if (avatarEl) avatarEl.textContent = initials;
+
+  // Profile panel
+  document.getElementById('profile-big-initials').textContent = initials;
+  document.getElementById('profile-display-name').textContent = p.name || 'Anonymous';
+  document.getElementById('profile-tagline').textContent = p.bio || 'No bio yet';
+  document.getElementById('pf-name-val').textContent = p.name || 'Not set';
+  document.getElementById('pf-bio-val').textContent = p.bio || 'Not set';
+
+  // Panel stats
+  const { done, total } = completion();
+  document.getElementById('p-streak').textContent = state.streak;
+  document.getElementById('p-tasks').textContent = done;
+  document.getElementById('p-total').textContent = total;
+}
+
+/* ══════════════════════════════════════════════════════════
    STATE
-   Structure:
-     milestones[].tasks[].done  ← REMOVED (no longer stored here)
-     dailyDone: { "YYYY-MM-DD": { taskId: true, ... } }
-     ← Tasks are marked done per-day. On a new day, they reset automatically.
+   dailyDone: { "YYYY-MM-DD": { taskId: true } }
+   'done' is NOT stored in task objects — resets automatically each day
    ══════════════════════════════════════════════════════════ */
 const DEFAULT_STATE = {
   goal: null,
-  milestones: [],     // [{ id, name, tasks:[{ id, text }] }]  — no 'done' field
-  dailyDone: {},      // { "YYYY-MM-DD": { "<taskId>": true } }
-  dailyLog: {},       // { "YYYY-MM-DD": { completed, total } }  for streak
+  milestones: [],   // tasks: [{ id, text }]  — no 'done' field
+  dailyDone: {},    // { "YYYY-MM-DD": { taskId: true } }
+  dailyLog: {},     // { "YYYY-MM-DD": { completed, total } }
   streak: 0,
   lastCompletionDate: null,
   focusDuration: 25,
@@ -50,15 +99,13 @@ let state = (() => {
     const raw = localStorage.getItem('dx_state');
     if (!raw) return { ...DEFAULT_STATE };
     const parsed = JSON.parse(raw);
-
-    // ── MIGRATION: if old state has task.done baked in, strip it out ──
+    // Migration: strip old 'done' field from tasks
     if (parsed.milestones) {
       parsed.milestones.forEach(m => {
         if (m.tasks) m.tasks = m.tasks.map(t => ({ id: t.id, text: t.text }));
       });
     }
     if (!parsed.dailyDone) parsed.dailyDone = {};
-
     return { ...DEFAULT_STATE, ...parsed };
   } catch { return { ...DEFAULT_STATE }; }
 })();
@@ -69,80 +116,126 @@ function save() {
 
 /* ══════════════════════════════════════════════════════════
    DATE UTILS
+   IMPORTANT: use LOCAL date (not UTC) for day keys
+   so "today" matches the user's actual clock
    ══════════════════════════════════════════════════════════ */
 const uid = () => Math.random().toString(36).slice(2, 9);
-const todayKey = () => new Date().toISOString().slice(0, 10);
-const todayLabel = () => new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
-const greeting = () => { const h = new Date().getHours(); return h<12?'Good morning':h<17?'Good afternoon':'Good evening'; };
+
+function localDateKey(d) {
+  // Returns "YYYY-MM-DD" in local time, not UTC
+  const date = d || new Date();
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function todayKey() { return localDateKey(); }
+
+function todayLabel() {
+  return new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
+}
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+}
 const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-/* ══════════════════════════════════════════════════════════
-   DAILY DONE HELPERS
-   isTaskDone() and toggleTaskDone() use today's key only.
-   On any other day, isDone returns false automatically.
-   ══════════════════════════════════════════════════════════ */
+/* ── Daily done helpers ─────────────────────────────────────── */
 function getTodayDone() {
   const k = todayKey();
   if (!state.dailyDone[k]) state.dailyDone[k] = {};
   return state.dailyDone[k];
 }
-
-function isTaskDone(taskId) {
-  return !!getTodayDone()[taskId];
+function isTaskDone(id) { return !!getTodayDone()[id]; }
+function setTaskDone(id, val) {
+  if (val) getTodayDone()[id] = true;
+  else delete getTodayDone()[id];
 }
 
-function setTaskDone(taskId, val) {
-  getTodayDone()[taskId] = val;
-  if (!val) delete getTodayDone()[taskId];
-}
-
-/* ── Prune dailyDone older than 7 days to avoid localStorage bloat ── */
 function pruneOldDays() {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 7);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
-  Object.keys(state.dailyDone).forEach(k => { if (k < cutoffStr) delete state.dailyDone[k]; });
-  Object.keys(state.dailyLog).forEach(k => { if (k < cutoffStr) delete state.dailyLog[k]; });
+  const cutoff = localDateKey(new Date(Date.now() - 8 * 86400000));
+  [state.dailyDone, state.dailyLog].forEach(obj => {
+    Object.keys(obj).forEach(k => { if (k < cutoff) delete obj[k]; });
+  });
 }
 
-/* ══════════════════════════════════════════════════════════
-   TASK / COMPLETION HELPERS
-   ══════════════════════════════════════════════════════════ */
+/* ── Task/completion helpers ────────────────────────────────── */
 function allTasks() {
   return state.milestones.flatMap(m =>
-    m.tasks.map(t => ({
-      ...t,
-      done: isTaskDone(t.id),
-      milestoneId: m.id,
-      milestoneName: m.name
-    }))
+    m.tasks.map(t => ({ ...t, done: isTaskDone(t.id), milestoneId: m.id, milestoneName: m.name }))
   );
 }
-
 function completion() {
   const tasks = allTasks();
-  const total = tasks.length;
-  const done  = tasks.filter(t => t.done).length;
+  const total = tasks.length, done = tasks.filter(t => t.done).length;
   return { total, done, pct: total ? Math.round(done / total * 100) : 0 };
 }
 
 /* ══════════════════════════════════════════════════════════
-   STREAK  (unchanged logic, just uses new completion())
+   STREAK SYSTEM — FIXED
+   
+   Logic:
+   - A "day" is defined by local YYYY-MM-DD key
+   - Streak increments when ALL tasks are done on a given day
+   - If user opens app on a new day without completing tasks,
+     streak does NOT reset until midnight has passed AND they 
+     had tasks yesterday that went undone.
+   - We compare lastCompletionDate to today using local keys.
    ══════════════════════════════════════════════════════════ */
 function updateStreak() {
   const t = todayKey();
   const { done, total } = completion();
   state.dailyLog[t] = { completed: done, total };
 
-  if (done > 0 && done === total && total > 0) {
+  if (total === 0) { save(); return; } // no tasks → don't touch streak
+
+  const allDone = (done === total);
+
+  if (allDone) {
     if (!state.lastCompletionDate) {
+      // First ever completion
       state.streak = 1;
+      state.lastCompletionDate = t;
+    } else if (state.lastCompletionDate === t) {
+      // Already counted today, just re-saving (e.g. un-check then re-check)
+      // streak stays the same
     } else {
-      const diff = (new Date(t) - new Date(state.lastCompletionDate)) / 86400000;
-      state.streak = diff === 1 ? state.streak + 1 : 1;
+      // Compare local dates by parsing YYYY-MM-DD strings
+      const [ly, lm, ld] = state.lastCompletionDate.split('-').map(Number);
+      const [ty, tm, td] = t.split('-').map(Number);
+      const lastDate = new Date(ly, lm - 1, ld);
+      const todayDate = new Date(ty, tm - 1, td);
+      const diffDays = Math.round((todayDate - lastDate) / 86400000);
+
+      if (diffDays === 1) {
+        state.streak += 1;          // consecutive day
+      } else if (diffDays > 1) {
+        state.streak = 1;           // gap → restart streak
+      }
+      // diffDays === 0 means same day (shouldn't happen here)
+      state.lastCompletionDate = t;
     }
-    state.lastCompletionDate = t;
+  } else {
+    // Tasks exist but not all done today
+    // Check if yesterday was the last completion — if so, streak is still valid
+    // Don't reset streak mid-day just because tasks aren't done yet
+    // Only reset if we're on a NEW day after a gap
+    if (state.lastCompletionDate && state.lastCompletionDate !== t) {
+      const [ly, lm, ld] = state.lastCompletionDate.split('-').map(Number);
+      const [ty, tm, td] = t.split('-').map(Number);
+      const lastDate = new Date(ly, lm - 1, ld);
+      const todayDate = new Date(ty, tm - 1, td);
+      const diffDays = Math.round((todayDate - lastDate) / 86400000);
+      if (diffDays > 1) {
+        // More than 1 day since last completion — streak is broken
+        state.streak = 0;
+        state.lastCompletionDate = null;
+      }
+      // diffDays === 1 means yesterday was last completion, today in progress → keep streak
+    }
   }
+
   save();
 }
 
@@ -158,7 +251,7 @@ function toast(msg) {
 }
 
 /* ══════════════════════════════════════════════════════════
-   CONFIRM DELETE DIALOG
+   CONFIRM DELETE
    ══════════════════════════════════════════════════════════ */
 let _confirmCb = null;
 function confirmDelete(title, text, cb) {
@@ -173,7 +266,7 @@ function closeConfirm() {
 }
 
 /* ══════════════════════════════════════════════════════════
-   AUDIO / HAPTIC FEEDBACK
+   AUDIO / HAPTIC
    ══════════════════════════════════════════════════════════ */
 function pulse(x, y) {
   if (navigator.vibrate) navigator.vibrate([12, 8, 12]);
@@ -210,7 +303,7 @@ function navigate(id) {
 }
 
 /* ══════════════════════════════════════════════════════════
-   HOME SCREEN
+   HOME
    ══════════════════════════════════════════════════════════ */
 function renderHome() {
   document.getElementById('hero-greeting').textContent = greeting();
@@ -227,11 +320,7 @@ function renderHome() {
   const tasks = allTasks();
 
   if (!tasks.length) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon">🎯</div>
-        <p>No tasks yet.<br>Head to Roadmap to build your plan.</p>
-      </div>`;
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🎯</div><p>No tasks yet.<br>Head to Roadmap to build your plan.</p></div>`;
     return;
   }
 
@@ -253,24 +342,17 @@ function renderHome() {
         </svg>
       </button>`;
 
-    el.querySelector('.task-check').addEventListener('click', e => {
-      e.stopPropagation();
-      toggleTask(task.id, e.clientX, e.clientY);
-    });
-    el.querySelector('.task-text').addEventListener('click', e => {
-      toggleTask(task.id, e.clientX, e.clientY);
-    });
+    el.querySelector('.task-check').addEventListener('click', e => { e.stopPropagation(); toggleTask(task.id, e.clientX, e.clientY); });
+    el.querySelector('.task-text').addEventListener('click', e => { toggleTask(task.id, e.clientX, e.clientY); });
     el.querySelector('.task-delete').addEventListener('click', e => {
       e.stopPropagation();
       confirmDelete('Delete Task?', `"${task.text}" will be permanently removed.`, () => {
         const ms = state.milestones.find(m => m.id === task.milestoneId);
         if (ms) ms.tasks = ms.tasks.filter(t => t.id !== task.id);
-        // also clean up dailyDone for this task
         Object.values(state.dailyDone).forEach(d => delete d[task.id]);
         save(); renderHome(); toast('🗑 Task deleted');
       });
     });
-
     container.appendChild(el);
   });
 }
@@ -282,21 +364,18 @@ function toggleTask(taskId, x, y) {
   updateStreak();
   save();
   renderHome();
+  renderProfileUI();
 }
 
 /* ══════════════════════════════════════════════════════════
-   ROADMAP SCREEN
+   ROADMAP
    ══════════════════════════════════════════════════════════ */
 function renderRoadmap() {
   const wrap = document.getElementById('roadmap-content');
   wrap.innerHTML = '';
 
   if (!state.goal) {
-    wrap.innerHTML = `
-      <div class="no-goal-card">
-        <div class="no-goal-icon">🗺️</div>
-        <p class="no-goal-text">No goal set yet.<br>Tap the target icon above to create your main goal.</p>
-      </div>`;
+    wrap.innerHTML = `<div class="no-goal-card"><div class="no-goal-icon">🗺️</div><p class="no-goal-text">No goal set yet.<br>Tap the target icon above to create your main goal.</p></div>`;
     appendAddMsBtn(wrap);
     return;
   }
@@ -322,10 +401,7 @@ function renderRoadmap() {
 function appendAddMsBtn(wrap) {
   const btn = document.createElement('button');
   btn.className = 'add-btn';
-  btn.innerHTML = `
-    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-      <path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    </svg> Add Milestone`;
+  btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> Add Milestone`;
   btn.addEventListener('click', () => openModal('milestone'));
   wrap.appendChild(btn);
 }
@@ -355,14 +431,11 @@ function buildMilestoneCard(ms) {
         </svg>
       </div>
     </div>
-    <div class="ms-body">
-      <div class="ms-body-inner" id="ms-body-${ms.id}"></div>
-    </div>`;
+    <div class="ms-body"><div class="ms-body-inner" id="ms-body-${ms.id}"></div></div>`;
 
   card.querySelector('.milestone-header').addEventListener('click', () => card.classList.toggle('open'));
 
   const body = card.querySelector(`#ms-body-${ms.id}`);
-
   tasks.forEach(t => {
     const isDone = isTaskDone(t.id);
     const row = document.createElement('div');
@@ -386,25 +459,19 @@ function buildMilestoneCard(ms) {
     body.appendChild(row);
   });
 
-  // Add task button
   const addTask = document.createElement('button');
   addTask.className = 'add-btn';
   addTask.style.marginTop = '8px';
-  addTask.innerHTML = `
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-      <path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    </svg> Add Task`;
+  addTask.innerHTML = `<svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> Add Task`;
   addTask.addEventListener('click', e => { e.stopPropagation(); openModal('task', ms.id); });
   body.appendChild(addTask);
 
-  // Delete milestone button
   const delMs = document.createElement('button');
   delMs.className = 'btn-ghost danger';
   delMs.textContent = 'Delete Milestone';
   delMs.addEventListener('click', e => {
     e.stopPropagation();
     confirmDelete('Delete Milestone?', `"${ms.name}" and all its tasks will be removed.`, () => {
-      // cleanup dailyDone for all tasks in this milestone
       ms.tasks.forEach(t => Object.values(state.dailyDone).forEach(d => delete d[t.id]));
       state.milestones = state.milestones.filter(m => m.id !== ms.id);
       save(); renderRoadmap(); renderHome(); toast('🗑 Milestone deleted');
@@ -416,7 +483,7 @@ function buildMilestoneCard(ms) {
 }
 
 /* ══════════════════════════════════════════════════════════
-   STATS SCREEN
+   STATS
    ══════════════════════════════════════════════════════════ */
 function renderStats() {
   const { pct, done, total } = completion();
@@ -437,8 +504,8 @@ function renderThemePicker() {
     sw.className = `theme-swatch${th.id === current ? ' active' : ''}`;
     sw.dataset.themeId = th.id;
     sw.innerHTML = `
-      <div class="theme-swatch-bg" style="background:${th.bg};flex:1;position:relative;">
-        <div style="position:absolute;bottom:6px;right:6px;width:18px;height:18px;border-radius:50%;background:${th.accent};box-shadow:0 0 10px ${th.accent}88;"></div>
+      <div class="theme-swatch-bg" style="background:${th.bg};">
+        <div style="position:absolute;bottom:8px;right:8px;width:20px;height:20px;border-radius:50%;background:${th.accent};box-shadow:0 0 10px ${th.accent}88;"></div>
       </div>
       <div class="theme-swatch-label">${th.name}</div>`;
     sw.addEventListener('click', () => {
@@ -448,6 +515,23 @@ function renderThemePicker() {
     });
     grid.appendChild(sw);
   });
+}
+
+/* ══════════════════════════════════════════════════════════
+   PROFILE PANEL
+   ══════════════════════════════════════════════════════════ */
+function openProfile() {
+  renderProfileUI();
+  document.getElementById('profile-overlay').classList.add('active');
+}
+function closeProfile() {
+  document.getElementById('profile-overlay').classList.remove('active');
+}
+
+function editProfileField(field) {
+  const p = loadProfile();
+  const isName = field === 'name';
+  openModal('profile-edit', { field, current: isName ? p.name : p.bio });
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -518,8 +602,35 @@ function openModal(type, ctx) {
     document.getElementById('m-save').onclick = () => {
       const text = document.getElementById('m-task-text').value.trim();
       if (!text || !ms) return toast('Enter a task');
-      ms.tasks.push({ id: uid(), text });   // ← no 'done' field
+      ms.tasks.push({ id: uid(), text });
       save(); closeModal(); renderRoadmap(); renderHome(); toast('✅ Task added!');
+    };
+    document.getElementById('m-cancel').onclick = closeModal;
+  }
+
+  if (type === 'profile-edit') {
+    const isName = ctx.field === 'name';
+    body.innerHTML = `
+      <div class="modal-handle"></div>
+      <div class="modal-title">${isName ? 'Your Name' : 'Your Bio'}</div>
+      <div class="form-group">
+        <label class="form-label">${isName ? 'Full Name' : 'Short Bio'}</label>
+        <input class="form-input" id="m-pf-val" type="text"
+          placeholder="${isName ? 'e.g. Alex Kumar' : 'e.g. Building discipline daily'}"
+          maxlength="${isName ? 40 : 80}"
+          value="${esc(ctx.current || '')}">
+      </div>
+      <button class="btn-primary" id="m-save">Save</button>
+      <button class="btn-ghost" id="m-cancel">Cancel</button>`;
+    setTimeout(() => document.getElementById('m-pf-val')?.focus(), 80);
+    document.getElementById('m-save').onclick = () => {
+      const val = document.getElementById('m-pf-val').value.trim();
+      const p = loadProfile();
+      p[ctx.field] = val;
+      saveProfile(p);
+      closeModal();
+      renderProfileUI();
+      toast(`✓ ${isName ? 'Name' : 'Bio'} updated`);
     };
     document.getElementById('m-cancel').onclick = closeModal;
   }
@@ -566,19 +677,15 @@ function openFocus() {
   document.getElementById('focus-overlay').classList.add('active');
   document.body.style.overflow = 'hidden';
 }
-
 function closeFocus(force) {
   if (!force && focusRunning && !confirm('Exit focus? Timer will reset.')) return;
-  clearInterval(focusInterval);
-  focusRunning = false;
+  clearInterval(focusInterval); focusRunning = false;
   document.getElementById('focus-overlay').classList.remove('active');
   document.body.style.overflow = '';
 }
-
 function toggleFocus() {
   if (focusRunning) {
-    clearInterval(focusInterval);
-    focusRunning = false;
+    clearInterval(focusInterval); focusRunning = false;
     document.getElementById('focus-play-icon').innerHTML = iconPlay();
     document.getElementById('timer-state').textContent = 'PAUSED';
   } else {
@@ -591,12 +698,10 @@ function toggleFocus() {
     focusInterval = setInterval(tick, 1000);
   }
 }
-
 function tick() {
   if (focusRemaining <= 0) { clearInterval(focusInterval); focusRunning = false; onTimerDone(); return; }
   focusRemaining--;
-  updateTimerUI();
-  updateRing(focusRemaining / focusTotal);
+  updateTimerUI(); updateRing(focusRemaining / focusTotal);
 }
 function updateTimerUI() {
   const m = String(Math.floor(focusRemaining / 60)).padStart(2, '0');
@@ -631,7 +736,6 @@ function onTimerDone() {
     });
   } catch(_) {}
 }
-
 const iconPlay  = () => `<svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><path d="M7 4L18 11L7 18V4Z"/></svg>`;
 const iconPause = () => `<svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><rect x="5" y="3" width="4" height="16" rx="1"/><rect x="13" y="3" width="4" height="16" rx="1"/></svg>`;
 
@@ -644,37 +748,56 @@ document.addEventListener('DOMContentLoaded', () => {
 
   loadTheme();
   pruneOldDays();
+  updateStreak();
+  renderProfileUI();
 
+  // Navigation
   document.querySelectorAll('.nav-item').forEach(el =>
     el.addEventListener('click', () => navigate(el.dataset.nav))
   );
 
+  // Top bar buttons
   document.getElementById('btn-set-goal').addEventListener('click', () => openModal('goal'));
   document.getElementById('btn-reset').addEventListener('click', () => openModal('reset'));
 
+  // Profile avatar
+  document.getElementById('btn-profile').addEventListener('click', openProfile);
+  document.getElementById('profile-close-btn').addEventListener('click', closeProfile);
+  // Close profile when clicking overlay background
+  document.getElementById('profile-overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('profile-overlay')) closeProfile();
+  });
+  // Edit buttons inside profile panel
+  document.querySelectorAll('.pf-edit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      closeProfile();
+      setTimeout(() => editProfileField(btn.dataset.field), 100);
+    });
+  });
+
+  // Focus mode
   document.getElementById('start-focus-btn').addEventListener('click', openFocus);
   document.getElementById('focus-play-btn').addEventListener('click', toggleFocus);
   document.getElementById('focus-reset-btn').addEventListener('click', resetFocus);
   document.getElementById('focus-exit-btn').addEventListener('click', () => closeFocus(false));
   document.getElementById('focus-timer-input').addEventListener('change', e => {
     const v = Math.max(1, Math.min(120, parseInt(e.target.value) || 25));
-    e.target.value = v;
-    state.focusDuration = v;
+    e.target.value = v; state.focusDuration = v;
     if (!focusRunning) { focusRemaining = focusTotal = v * 60; updateTimerUI(); updateRing(1); }
   });
 
+  // Modal close on backdrop
   document.getElementById('modal-overlay').addEventListener('click', e => {
     if (e.target === document.getElementById('modal-overlay')) closeModal();
   });
 
-  document.getElementById('confirm-del-btn').addEventListener('click', () => {
-    if (_confirmCb) _confirmCb();
-    closeConfirm();
-  });
+  // Confirm dialog
+  document.getElementById('confirm-del-btn').addEventListener('click', () => { if (_confirmCb) _confirmCb(); closeConfirm(); });
   document.getElementById('confirm-cancel-btn').addEventListener('click', closeConfirm);
 
+  // Init focus icon
   document.getElementById('focus-play-icon').innerHTML = iconPlay();
 
+  // Initial render
   renderHome();
-  updateStreak();
 });
